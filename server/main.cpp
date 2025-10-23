@@ -3,6 +3,7 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <cstring>
 
 int main(int argc, char **argv)
 {
@@ -30,10 +31,13 @@ int main(int argc, char **argv)
 
     int clientSocket = accept(serverSocket, nullptr, nullptr);
 
-    char buffer[1024] = { 0 };
-    recv(clientSocket, buffer, sizeof(buffer), 0);
-    std::cout << "Message from client: " << buffer << std::endl;
-
+    char buffer[1024];
+    for (;;)
+    {
+        memset(buffer, 0, sizeof(buffer));
+        recv(clientSocket, buffer, sizeof(buffer), 0);
+        std::cout << buffer << std::endl;
+    }
     close(serverSocket);
 
     return 0;

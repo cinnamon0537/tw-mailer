@@ -29,8 +29,12 @@ int main(int argc, char **argv)
     connect(clientSocket, (struct sockaddr *)&serverAddress,
             sizeof(serverAddress));
 
-    const char *message = "Hello, server!";
-    send(clientSocket, message, strlen(message), 0);
+    std::string input;
+    for (;;)
+    {
+        std::getline(std::cin, input);
+        send(clientSocket, input.c_str(), input.length(), 0);
+    }
 
     close(clientSocket);
 
