@@ -1,5 +1,5 @@
 CXX = g++
-CXXFLAGS = -std=c++17 -O2 -Wall -Wextra
+CXXFLAGS = -std=c++17 -g -O2 -Wall -Wextra
 
 BIN = bin
 CLIENT_SRC = client/main.cpp
