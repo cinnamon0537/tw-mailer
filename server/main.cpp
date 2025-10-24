@@ -31,12 +31,13 @@ int main(int argc, char **argv)
 
     int clientSocket = accept(serverSocket, nullptr, nullptr);
 
-    char buffer[1024];
+    uint32_t length;
     for (;;)
     {
-        memset(buffer, 0, sizeof(buffer));
-        recv(clientSocket, buffer, sizeof(buffer), 0);
-        std::cout << buffer << std::endl;
+        recv(clientSocket, &length, sizeof(length), 0);
+        std::string buffer(length, '\0');
+        recv(clientSocket, &buffer[0], length, 0);
+        std::cout << "Client: " << buffer << std::endl;
     }
     close(serverSocket);
 

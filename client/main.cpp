@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <cstring>
 #include <arpa/inet.h>
+#include <cstdint>
 
 int main(int argc, char **argv)
 {
@@ -33,7 +34,9 @@ int main(int argc, char **argv)
     for (;;)
     {
         std::getline(std::cin, input);
-        send(clientSocket, input.c_str(), input.length(), 0);
+        uint32_t length = input.length();
+        send(clientSocket, &length, sizeof(length), 0);
+        send(clientSocket, input.c_str(), length, 0);
     }
 
     close(clientSocket);
