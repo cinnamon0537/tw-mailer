@@ -1,45 +1,55 @@
 #include <iostream>
-#include <getopt.h>
+#include <string>
+#include <cstdint>
+#include <cstring>
+#include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
-#include <cstring>
-#include <arpa/inet.h>
-#include <cstdint>
 
-int main(int argc, char **argv)
-{
-    if (argc < 3)
-    {
+static bool send_all(int fd, const void* buf, size_t len) {
+    const char* p = static_cast<const char*>(buf);
+    while (len > 0) {
+        ssize_t n = send(fd, p, len, 0);
+        if (n <= 0) return false; // peer closed or error
+        p   += static_cast<size_t>(n);
+        len -= static_cast<size_t>(n);
+    }
+    return true;
+}
+
+int main(int argc, char **argv) {
+    if (argc < 3) {
         std::cout << "Usage: " << argv[0] << " <ip> <port>\n";
         return 1;
     }
 
-    std::string ip = argv[1];
+    const char* ip = argv[1];
     int port = std::stoi(argv[2]);
+    std::cout << "Starting client -> " << ip << ":" << port << "\n";
 
-    std::cout << "Starting client at " << port << " for " << ip << "\n";
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) { perror("socket"); return 1; }
 
-    int clientSocket = socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in sa{};
+    sa.sin_family = AF_INET;
+    sa.sin_port = htons(port);
+    if (inet_pton(AF_INET, ip, &sa.sin_addr) != 1) { perror("inet_pton"); return 1; }
 
-    sockaddr_in serverAddress;
-    serverAddress.sin_family = AF_INET;
-    serverAddress.sin_port = htons(port);
-    serverAddress.sin_addr.s_addr = inet_addr(ip.c_str());
+    if (connect(sock, (sockaddr*)&sa, sizeof(sa)) < 0) { perror("connect"); return 1; }
 
-    connect(clientSocket, (struct sockaddr *)&serverAddress,
-            sizeof(serverAddress));
+    std::string line;
+    while (true) {
+        if (!std::getline(std::cin, line)) break; // EOF -> stop
 
-    std::string input;
-    for (;;)
-    {
-        std::getline(std::cin, input);
-        uint32_t length = input.length();
-        send(clientSocket, &length, sizeof(length), 0);
-        send(clientSocket, input.c_str(), length, 0);
+        // length prefix (network order)
+        uint32_t nlen = htonl(static_cast<uint32_t>(line.size()));
+        if (!send_all(sock, &nlen, sizeof(nlen))) break;
+
+        // payload
+        if (!send_all(sock, line.data(), line.size())) break;
     }
 
-    close(clientSocket);
-
+    close(sock);
     return 0;
 }
