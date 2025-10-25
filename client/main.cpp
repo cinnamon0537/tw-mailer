@@ -8,39 +8,9 @@
 #include <iostream>
 #include <string>
 
+#include "network_utils.h"
+
 constexpr const char* MESSAGE_TERMINATOR = ".";
-
-// ---------- low-level net helpers ----------
-static bool send_all(int fd, const void* buf, size_t len) {
-  const char* p = static_cast<const char*>(buf);
-  while (len > 0) {
-    ssize_t n = send(fd, p, len, 0);
-    if (n <= 0) return false;  // peer closed or error
-    p += static_cast<size_t>(n);
-    len -= static_cast<size_t>(n);
-  }
-  return true;
-}
-
-static bool recv_exact(int fd, void* buf, size_t len) {
-  char* p = static_cast<char*>(buf);
-  size_t got = 0;
-  while (got < len) {
-    ssize_t n = recv(fd, p + got, len - got, 0);
-    if (n <= 0) return false;
-    got += static_cast<size_t>(n);
-  }
-  return true;
-}
-
-static bool recv_block(int fd, std::string& out) {
-  uint32_t n = 0;
-  if (!recv_exact(fd, &n, sizeof n)) return false;
-  uint32_t len = ntohl(n);
-  out.assign(len, '\0');
-  if (len == 0) return true;
-  return recv_exact(fd, out.data(), out.size());
-}
 
 // ---------- socket creation ----------
 static int create_client_socket(const char* ip, int port) {
@@ -78,8 +48,9 @@ static void collect_and_send(int sock) {
     if (line == MESSAGE_TERMINATOR) {
       // finished one block: send it
       uint32_t nlen = htonl(static_cast<uint32_t>(buffer.size()));
-      if (!send_all(sock, &nlen, sizeof(nlen))) break;
-      if (!send_all(sock, buffer.data(), buffer.size())) break;
+      // message ([length: 4 bytes][data: length bytes]):
+      if (!send_all(sock, &nlen, sizeof(nlen))) break;  // payload length
+      if (!send_all(sock, buffer.data(), buffer.size())) break;  // payload
 
       // wait for server reply and print it
       std::string reply;
@@ -90,7 +61,7 @@ static void collect_and_send(int sock) {
       std::cout << "Server:\n" << reply << std::flush;
 
       buffer.clear();
-    } else {
+    } else {  // appends line to buffer with \n if not first line
       if (!buffer.empty()) buffer.push_back('\n');
       buffer += line;
     }
