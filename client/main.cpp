@@ -10,7 +10,7 @@
 
 constexpr const char* MESSAGE_TERMINATOR = ".";
 
-// ---------- low-level net helper ----------
+// ---------- low-level net helpers ----------
 static bool send_all(int fd, const void* buf, size_t len) {
   const char* p = static_cast<const char*>(buf);
   while (len > 0) {
@@ -20,6 +20,26 @@ static bool send_all(int fd, const void* buf, size_t len) {
     len -= static_cast<size_t>(n);
   }
   return true;
+}
+
+static bool recv_exact(int fd, void* buf, size_t len) {
+  char* p = static_cast<char*>(buf);
+  size_t got = 0;
+  while (got < len) {
+    ssize_t n = recv(fd, p + got, len - got, 0);
+    if (n <= 0) return false;
+    got += static_cast<size_t>(n);
+  }
+  return true;
+}
+
+static bool recv_block(int fd, std::string& out) {
+  uint32_t n = 0;
+  if (!recv_exact(fd, &n, sizeof n)) return false;
+  uint32_t len = ntohl(n);
+  out.assign(len, '\0');
+  if (len == 0) return true;
+  return recv_exact(fd, out.data(), out.size());
 }
 
 // ---------- socket creation ----------
@@ -60,6 +80,15 @@ static void collect_and_send(int sock) {
       uint32_t nlen = htonl(static_cast<uint32_t>(buffer.size()));
       if (!send_all(sock, &nlen, sizeof(nlen))) break;
       if (!send_all(sock, buffer.data(), buffer.size())) break;
+
+      // wait for server reply and print it
+      std::string reply;
+      if (!recv_block(sock, reply)) {
+        std::cerr << "Disconnected while waiting for reply.\n";
+        break;
+      }
+      std::cout << "Server:\n" << reply << std::flush;
+
       buffer.clear();
     } else {
       if (!buffer.empty()) buffer.push_back('\n');

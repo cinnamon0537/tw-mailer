@@ -10,7 +10,7 @@
 
 #include "commands.h"  // provides split_lines(), command_from(), CommandType
 
-// ---------- low-level net helper ----------
+// ---------- low-level net helpers ----------
 static bool recv_exact(int fd, void* buf, size_t len) {
   char* p = static_cast<char*>(buf);
   size_t got = 0;
@@ -20,6 +20,22 @@ static bool recv_exact(int fd, void* buf, size_t len) {
     got += static_cast<size_t>(n);
   }
   return true;
+}
+
+static bool send_all(int fd, const void* buf, size_t len) {
+  const char* p = static_cast<const char*>(buf);
+  while (len > 0) {
+    ssize_t n = send(fd, p, len, 0);
+    if (n <= 0) return false;
+    p += static_cast<size_t>(n);
+    len -= static_cast<size_t>(n);
+  }
+  return true;
+}
+
+static bool send_block(int fd, const std::string& msg) {
+  uint32_t n = htonl(static_cast<uint32_t>(msg.size()));
+  return send_all(fd, &n, sizeof n) && send_all(fd, msg.data(), msg.size());
 }
 
 // ---------- server setup ----------
@@ -53,7 +69,7 @@ static int create_server_socket(int port) {
 
 // ---------- per-client handling (framing + dispatch) ----------
 static void handle_client(int clientSocket, const std::string& spoolDir) {
-  (void)spoolDir;  // unused for now; will be used by SEND/LIST/READ/DEL handlers
+  (void)spoolDir;  // will be used by handlers later
 
   for (;;) {
     // 1) read 4-byte length (network order)
@@ -76,7 +92,7 @@ static void handle_client(int clientSocket, const std::string& spoolDir) {
     // 3) parse and dispatch
     auto lines = split_lines(payload);
     if (lines.empty()) {
-      // No response yet in this commit
+      (void)send_block(clientSocket, "ERR\n");
       continue;
     }
 
@@ -84,23 +100,37 @@ static void handle_client(int clientSocket, const std::string& spoolDir) {
     switch (cmd) {
       case CommandType::SEND:
         std::cout << "SEND command\n";
+        // TODO: implement send; for now acknowledge
+        (void)send_block(clientSocket, "OK\n");
         break;
+
       case CommandType::LIST:
         std::cout << "LIST command\n";
+        // TODO: implement listing; placeholder
+        (void)send_block(clientSocket, "0\n");  // e.g., 0 messages for now
         break;
+
       case CommandType::READ:
         std::cout << "READ command\n";
+        // TODO: implement read; placeholder error
+        (void)send_block(clientSocket, "ERR\n");
         break;
+
       case CommandType::DEL:
         std::cout << "DEL command\n";
+        // TODO: implement delete; placeholder
+        (void)send_block(clientSocket, "OK\n");
         break;
+
       case CommandType::QUIT:
         std::cout << "QUIT command\n";
+        // per spec: no response
         close(clientSocket);
         return;
+
       default:
         std::cout << "Unknown command\n";
-        // No response yet in this commit
+        (void)send_block(clientSocket, "ERR\n");
         break;
     }
 
@@ -118,8 +148,8 @@ int main(int argc, char** argv) {
 
   int port = std::stoi(argv[1]);
   std::string spoolDir = argv[2];
-  std::cout << "Starting server on port " << port
-            << " (spool dir: " << spoolDir << ")\n";
+  std::cout << "Starting server on port " << port << " (spool dir: " << spoolDir
+            << ")\n";
 
   int serverSocket = create_server_socket(port);
   if (serverSocket < 0) return 1;
