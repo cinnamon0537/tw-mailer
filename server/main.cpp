@@ -8,6 +8,8 @@
 #include <iostream>
 #include <string>
 
+#include "commands.h"
+
 static bool recv_exact(int fd, void* buf, size_t len) {
   char* p = static_cast<char*>(buf);
   size_t got = 0;
@@ -82,8 +84,39 @@ int main(int argc, char** argv) {
         break;
       }
 
+      auto lines = split_lines(payload);
+      if (lines.empty()) {
+        // send error
+        continue;
+      }
+
+      CommandType cmd = command_from(lines[0]);
+
+      switch (cmd) {
+        case CommandType::SEND:
+          std::cout << "SEND command\n";
+          break;
+        case CommandType::LIST:
+          std::cout << "LIST command\n";
+          break;
+        case CommandType::READ:
+          std::cout << "READ command\n";
+          break;
+        case CommandType::DEL:
+          std::cout << "DEL command\n";
+          break;
+        case CommandType::QUIT:
+          std::cout << "QUIT command\n";
+          close(clientSocket);
+          return 0;
+        default:
+          std::cout << "Unknown command\n";
+          // send block
+          break;
+      }
+
       // For now: just print what we got
-      std::cout << "Client: " << payload << "\n";
+      std::cout << "Client:\n" << payload << "\n";
     }
   }
 
