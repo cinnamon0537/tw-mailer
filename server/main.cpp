@@ -8,8 +8,9 @@
 #include <iostream>
 #include <string>
 
-#include "commands.h"
+#include "commands.h"  // provides split_lines(), command_from(), CommandType
 
+// ---------- low-level net helper ----------
 static bool recv_exact(int fd, void* buf, size_t len) {
   char* p = static_cast<char*>(buf);
   size_t got = 0;
@@ -21,21 +22,12 @@ static bool recv_exact(int fd, void* buf, size_t len) {
   return true;
 }
 
-int main(int argc, char** argv) {
-  if (argc < 3) {
-    std::cout << "Usage: " << argv[0] << " <port> <mail-spool-directoryname>\n";
-    return 1;
-  }
-
-  int port = std::stoi(argv[1]);
-  std::string spoolDir = argv[2];
-  std::cout << "Starting server on port " << port << " (spool dir: " << spoolDir
-            << ")\n";
-
+// ---------- server setup ----------
+static int create_server_socket(int port) {
   int serverSocket = socket(AF_INET, SOCK_STREAM, 0);
   if (serverSocket < 0) {
     perror("socket");
-    return 1;
+    return -1;
   }
 
   int yes = 1;
@@ -48,12 +40,89 @@ int main(int argc, char** argv) {
 
   if (bind(serverSocket, (sockaddr*)&addr, sizeof(addr)) < 0) {
     perror("bind");
-    return 1;
+    close(serverSocket);
+    return -1;
   }
   if (listen(serverSocket, 5) < 0) {
     perror("listen");
+    close(serverSocket);
+    return -1;
+  }
+  return serverSocket;
+}
+
+// ---------- per-client handling (framing + dispatch) ----------
+static void handle_client(int clientSocket, const std::string& spoolDir) {
+  (void)spoolDir;  // unused for now; will be used by SEND/LIST/READ/DEL handlers
+
+  for (;;) {
+    // 1) read 4-byte length (network order)
+    uint32_t nlen = 0;
+    if (!recv_exact(clientSocket, &nlen, sizeof(nlen))) {
+      std::cout << "Client disconnected.\n";
+      close(clientSocket);
+      return;
+    }
+    uint32_t len = ntohl(nlen);
+
+    // 2) read payload
+    std::string payload(len, '\0');
+    if (len > 0 && !recv_exact(clientSocket, payload.data(), payload.size())) {
+      std::cout << "Client disconnected.\n";
+      close(clientSocket);
+      return;
+    }
+
+    // 3) parse and dispatch
+    auto lines = split_lines(payload);
+    if (lines.empty()) {
+      // No response yet in this commit
+      continue;
+    }
+
+    CommandType cmd = command_from(lines[0]);
+    switch (cmd) {
+      case CommandType::SEND:
+        std::cout << "SEND command\n";
+        break;
+      case CommandType::LIST:
+        std::cout << "LIST command\n";
+        break;
+      case CommandType::READ:
+        std::cout << "READ command\n";
+        break;
+      case CommandType::DEL:
+        std::cout << "DEL command\n";
+        break;
+      case CommandType::QUIT:
+        std::cout << "QUIT command\n";
+        close(clientSocket);
+        return;
+      default:
+        std::cout << "Unknown command\n";
+        // No response yet in this commit
+        break;
+    }
+
+    // Debug print of raw payload (optional; keep while developing)
+    std::cout << "Client:\n" << payload << "\n";
+  }
+}
+
+// ---------- main: thin orchestration ----------
+int main(int argc, char** argv) {
+  if (argc < 3) {
+    std::cout << "Usage: " << argv[0] << " <port> <mail-spool-directoryname>\n";
     return 1;
   }
+
+  int port = std::stoi(argv[1]);
+  std::string spoolDir = argv[2];
+  std::cout << "Starting server on port " << port
+            << " (spool dir: " << spoolDir << ")\n";
+
+  int serverSocket = create_server_socket(port);
+  if (serverSocket < 0) return 1;
 
   std::cout << "Server listening…\n";
 
@@ -65,62 +134,11 @@ int main(int argc, char** argv) {
     }
 
     std::cout << "Client connected.\n";
-    for (;;) {
-      // read 4-byte length (network order)
-      uint32_t nlen = 0;
-      if (!recv_exact(clientSocket, &nlen, sizeof(nlen))) {
-        std::cout << "Client disconnected.\n";
-        close(clientSocket);
-        break;  // back to accept() for next client
-      }
-      uint32_t len = ntohl(nlen);
-
-      // read payload
-      std::string payload(len, '\0');
-      if (len > 0 &&
-          !recv_exact(clientSocket, payload.data(), payload.size())) {
-        std::cout << "Client disconnected.\n";
-        close(clientSocket);
-        break;
-      }
-
-      auto lines = split_lines(payload);
-      if (lines.empty()) {
-        // send error
-        continue;
-      }
-
-      CommandType cmd = command_from(lines[0]);
-
-      switch (cmd) {
-        case CommandType::SEND:
-          std::cout << "SEND command\n";
-          break;
-        case CommandType::LIST:
-          std::cout << "LIST command\n";
-          break;
-        case CommandType::READ:
-          std::cout << "READ command\n";
-          break;
-        case CommandType::DEL:
-          std::cout << "DEL command\n";
-          break;
-        case CommandType::QUIT:
-          std::cout << "QUIT command\n";
-          close(clientSocket);
-          return 0;
-        default:
-          std::cout << "Unknown command\n";
-          // send block
-          break;
-      }
-
-      // For now: just print what we got
-      std::cout << "Client:\n" << payload << "\n";
-    }
+    handle_client(clientSocket, spoolDir);
+    // loop back to accept() for the next client
   }
 
-  // (Unreachable in this simple loop)
+  // Unreachable in this simple loop
   close(serverSocket);
   return 0;
 }
