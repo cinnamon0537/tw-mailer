@@ -1,19 +1,26 @@
-CXX = g++
+CXX      = g++
 CXXFLAGS = -std=c++17 -g -O2 -Wall -Wextra
+CPPFLAGS = -I. -Icommon -Iserver     # header search paths
+BIN      = bin
 
-BIN = bin
-CLIENT_SRC = client/main.cpp
-SERVER_SRC = server/main.cpp
+# shared / common
+COMMON_SRC  = common/net.cpp
+
+# targets
+CLIENT_SRC  = client/main.cpp $(COMMON_SRC)
+SERVER_SRC  = server/main.cpp server/command_factory.cpp $(COMMON_SRC)
 
 all: $(BIN)/twmailer-client $(BIN)/twmailer-server
 
 $(BIN)/twmailer-client: $(CLIENT_SRC)
 	mkdir -p $(BIN)
-	$(CXX) $(CXXFLAGS) -o $@ $(CLIENT_SRC) $(LDFLAGS)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -o $@ $^
 
 $(BIN)/twmailer-server: $(SERVER_SRC)
 	mkdir -p $(BIN)
-	$(CXX) $(CXXFLAGS) -o $@ $(SERVER_SRC) $(LDFLAGS)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -o $@ $^
 
 clean:
 	rm -rf $(BIN)
+
+.PHONY: all clean
