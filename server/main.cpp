@@ -8,8 +8,9 @@
 #include <iostream>
 #include <string>
 
-#include "commands.h"  // provides split_lines(), command_from(), CommandType
-#include "network_utils.h"
+#include "command_factory.h"  // neu
+#include "commands.h"  // command_from, split_lines          :contentReference[oaicite:5]{index=5}
+#include "network_utils.h"  // send_block / recv_block (hast du bereits) :contentReference[oaicite:4]{index=4}
 
 // ---------- server setup ----------
 static int create_server_socket(int port) {
@@ -64,47 +65,32 @@ static void handle_client(int clientSocket, const std::string& spoolDir) {
 
     // 3) parse and dispatch
     auto lines = split_lines(payload);
+    // lines ist bereits gefüllt, z.B. aus split_lines(payload)
     if (lines.empty()) {
+      (void)send_block(clientSocket, "ERR\n");  // minimal
+      continue;
+    }
+
+    CommandType type = command_from(lines[0]);
+    auto cmd = CommandFactory::create(type);
+
+    if (!cmd) {
       (void)send_block(clientSocket, "ERR\n");
       continue;
     }
 
-    CommandType cmd = command_from(lines[0]);
-    switch (cmd) {
-      case CommandType::SEND:
-        std::cout << "SEND command\n";
-        // TODO: implement send; for now acknowledge
-        (void)send_block(clientSocket, "OK\n");
-        break;
+    Context ctx{clientSocket, spoolDir};
+    CommandOutcome out = cmd->execute(ctx, lines);
 
-      case CommandType::LIST:
-        std::cout << "LIST command\n";
-        // TODO: implement listing; placeholder
-        (void)send_block(clientSocket, "0\n");  // e.g., 0 messages for now
-        break;
+    // Antwort schicken (wenn vorhanden)
+    if (!out.response.empty()) {
+      (void)send_block(clientSocket, out.response);
+    }
 
-      case CommandType::READ:
-        std::cout << "READ command\n";
-        // TODO: implement read; placeholder error
-        (void)send_block(clientSocket, "ERR\n");
-        break;
-
-      case CommandType::DEL:
-        std::cout << "DEL command\n";
-        // TODO: implement delete; placeholder
-        (void)send_block(clientSocket, "OK\n");
-        break;
-
-      case CommandType::QUIT:
-        std::cout << "QUIT command\n";
-        // per spec: no response
-        close(clientSocket);
-        return;
-
-      default:
-        std::cout << "Unknown command\n";
-        (void)send_block(clientSocket, "ERR\n");
-        break;
+    // Verbindung schließen?
+    if (out.shouldClose) {
+      close(clientSocket);
+      return;  // zurück zum accept() im Aufrufer
     }
 
     // Debug print of raw payload (optional; keep while developing)
