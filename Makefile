@@ -7,8 +7,8 @@ BIN      = bin
 COMMON_SRC  = common/net.cpp
 
 # targets
-CLIENT_SRC  = client/main.cpp $(COMMON_SRC)
-SERVER_SRC  = server/main.cpp server/command_factory.cpp $(COMMON_SRC)
+CLIENT_SRC  = client/client.cpp $(COMMON_SRC)
+SERVER_SRC  = server/server.cpp server/command_factory.cpp $(COMMON_SRC)
 
 all: $(BIN)/twmailer-client $(BIN)/twmailer-server
 
