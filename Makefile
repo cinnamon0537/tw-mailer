@@ -1,5 +1,5 @@
 CXX      = g++
-CXXFLAGS = -std=c++17 -g -O2 -Wall -Wextra
+CXXFLAGS += -std=c++20 -Wall -Wextra -Wpedantic -O0 -g -fno-omit-frame-pointer
 CPPFLAGS = -I. -Icommon -Iserver     # header search paths
 BIN      = bin
 

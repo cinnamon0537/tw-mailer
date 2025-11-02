@@ -47,6 +47,10 @@ static int create_server_socket(int port) {
 static void handle_client(int clientSocket, const std::string& spoolDir) {
   (void)spoolDir;  // will be used by handlers later
 
+  timeval tv{ .tv_sec = 10, .tv_usec = 0 }; // 10s read/write timeout
+  setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+  setsockopt(clientSocket, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
   for (;;) {
     // 1) read 4-byte length (network order)
     uint32_t nlen = 0;
