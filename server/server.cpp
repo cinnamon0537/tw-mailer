@@ -12,6 +12,8 @@
 #include "commands.h"  // command_from, split_lines          :contentReference[oaicite:5]{index=5}
 #include "network_utils.h"  // send_block / recv_block (hast du bereits) :contentReference[oaicite:4]{index=4}
 
+static constexpr uint32_t MAX_PAYLOAD = 1u << 20;  // 1 MiB
+
 // ---------- server setup ----------
 static int create_server_socket(int port) {
   int serverSocket = socket(AF_INET, SOCK_STREAM, 0);
@@ -54,6 +56,13 @@ static void handle_client(int clientSocket, const std::string& spoolDir) {
       return;
     }
     uint32_t len = ntohl(nlen);
+
+    if (len == 0 ||
+        len > MAX_PAYLOAD) {  // DoS prevention. send error if bigger 1MB
+      (void)send_block(clientSocket, "ERR\n");
+      close(clientSocket);
+      return;
+    }
 
     // 2) read payload
     std::string payload(len, '\0');
