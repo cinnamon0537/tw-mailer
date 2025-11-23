@@ -87,36 +87,36 @@ class LoginCommand final : public ICommand {
       return {false, "ERR\n"};
     }
 
-    const std::string& username = lines[1];
-    const std::string& password = lines[2];
+    const std::string& rawUsername = lines[1];  // e.g. "LDAP if25b251"
+    const std::string& password    = lines[2];
 
     // Check if IP is blacklisted
     if (g_authManager->isBlacklisted(ctx.clientIP)) {
       return {false, "ERR\n"};
     }
 
-    // Try LDAP authentication
-    bool authSuccess = AuthManager::authenticateLDAP(username, password);
+    // Try LDAP authentication with the raw username (must still start with "LDAP ")
+    bool authSuccess = AuthManager::authenticateLDAP(rawUsername, password);
+
+    // Normalize username for attempt tracking and session (strip "LDAP " prefix)
+    std::string normalizedUser = rawUsername;
+    const std::string prefix = "LDAP ";
+    if (normalizedUser.rfind(prefix, 0) == 0) {
+      normalizedUser = normalizedUser.substr(prefix.size());  // "if25b251"
+    }
 
     if (authSuccess) {
-      // Strip the "LDAP " prefix so the session username is clean
-      const std::string prefix = "LDAP ";
-      std::string cleanUser = username;
-
-      if (cleanUser.rfind(prefix, 0) == 0) {
-        cleanUser = cleanUser.substr(prefix.size());
-      }
-
-      g_authManager->recordSuccess(ctx.clientIP, username);
+      // Record success using normalized username (no spaces)
+      g_authManager->recordSuccess(ctx.clientIP, normalizedUser);
 
       // Use clean username for session
-      ctx.authenticatedUser = cleanUser;
+      ctx.authenticatedUser = normalizedUser;
 
       return {false, "OK\n"};
     } else {
       // Record failed attempt (may blacklist IP if 3 attempts reached)
       bool blacklisted =
-          g_authManager->recordFailedAttempt(ctx.clientIP, username);
+          g_authManager->recordFailedAttempt(ctx.clientIP, normalizedUser);
       if (blacklisted) {
         // IP is now blacklisted for 1 minute
         return {false, "ERR\n"};
@@ -125,6 +125,7 @@ class LoginCommand final : public ICommand {
     }
   }
 };
+
 
 class SendCommand final : public ICommand {
  public:

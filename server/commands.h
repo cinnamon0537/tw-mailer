@@ -8,9 +8,9 @@ enum class CommandType { LOGIN, SEND, LIST, READ, DEL, QUIT, UNKNOWN };
 
 inline CommandType command_from(std::string_view s) {
   static const std::unordered_map<std::string_view, CommandType> map{
-      {"LOGIN", CommandType::LOGIN}, {"SEND", CommandType::SEND}, {"LIST", CommandType::LIST},
-      {"READ", CommandType::READ}, {"DEL", CommandType::DEL},
-      {"QUIT", CommandType::QUIT},
+      {"LOGIN", CommandType::LOGIN}, {"SEND", CommandType::SEND},
+      {"LIST", CommandType::LIST},   {"READ", CommandType::READ},
+      {"DEL", CommandType::DEL},     {"QUIT", CommandType::QUIT},
   };
   if (auto it = map.find(s); it != map.end()) return it->second;
   return CommandType::UNKNOWN;
