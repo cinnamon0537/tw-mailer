@@ -6,6 +6,7 @@ struct Context {
   int clientFd;             // Socket des Clients
   std::string spoolDir;     // Mail-Spool-Verzeichnis
   std::string authenticatedUser;  // Empty if not authenticated, username if authenticated
+  std::string clientIP;     // Client IP address for rate limiting and blacklisting
 };
 
 // Ergebnis eines Kommandos (ohne echte Implementierung)

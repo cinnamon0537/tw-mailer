@@ -3,19 +3,15 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#include <cerrno>
-#include <csignal>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
 #include <string>
-#include <sys/wait.h>
 
-#include "command_factory.h"  // neu
-#include "commands.h"  // command_from, split_lines          :contentReference[oaicite:5]{index=5}
-#include "network_utils.h"  // send_block / recv_block (hast du bereits) :contentReference[oaicite:4]{index=4}
-#include "network_utils.h"  // send_block / recv_block (hast du bereits) :contentReference[oaicite:4]{index=4}
-#include "network_utils.h"  // send_block / recv_block (hast du bereits) :contentReference[oaicite:4]{index=4}
+#include "command_factory.h"
+#include "auth_manager.h"
+#include "commands.h"  // command_from, split_lines
+#include "network_utils.h"  // send_block / recv_block
 
 static constexpr uint32_t MAX_PAYLOAD = 1u << 20;  // 1 MiB
 
@@ -48,10 +44,26 @@ static int create_server_socket(int port) {
   return serverSocket;
 }
 
+// ---------- helper: get client IP address ----------
+static std::string get_client_ip(int clientSocket) {
+  sockaddr_in addr;
+  socklen_t len = sizeof(addr);
+  if (getpeername(clientSocket, (sockaddr*)&addr, &len) == 0) {
+    char ipstr[INET_ADDRSTRLEN];
+    if (inet_ntop(AF_INET, &addr.sin_addr, ipstr, sizeof(ipstr))) {
+      return std::string(ipstr);
+    }
+  }
+  return "unknown";
+}
+
 // ---------- per-client handling (framing + dispatch) ----------
 static void handle_client(int clientSocket, const std::string& spoolDir) {
+  // Get client IP address
+  std::string clientIP = get_client_ip(clientSocket);
+  
   // Create context once per client session to maintain authentication state
-  Context ctx{clientSocket, spoolDir, ""};  // Start with empty authenticatedUser
+  Context ctx{clientSocket, spoolDir, "", clientIP};  // Start with empty authenticatedUser
 
   for (;;) {
     // 1) read 4-byte length (network order)
@@ -113,12 +125,6 @@ static void handle_client(int clientSocket, const std::string& spoolDir) {
   }
 }
 
-// ---------- signal handling ----------
-static void reap_children(int) {
-  while (waitpid(-1, nullptr, WNOHANG) > 0) {
-  }
-}
-
 // ---------- main: thin orchestration ----------
 int main(int argc, char** argv) {
   if (argc < 3) {
@@ -131,39 +137,26 @@ int main(int argc, char** argv) {
   std::cout << "Starting server on port " << port << " (spool dir: " << spoolDir
             << ")\n";
 
+  // Initialize authentication manager with blacklist file
+  std::string blacklistFile = spoolDir + "/.blacklist";
+  AuthManager authManager(blacklistFile);
+  setAuthManager(&authManager);
+
   int serverSocket = create_server_socket(port);
   if (serverSocket < 0) return 1;
-
-  std::signal(SIGCHLD, reap_children);
 
   std::cout << "Server listening…\n";
 
   for (;;) {
     int clientSocket = accept(serverSocket, nullptr, nullptr);
     if (clientSocket < 0) {
-      if (errno == EINTR) continue;
       perror("accept");
       continue;
     }
 
     std::cout << "Client connected.\n";
-
-    pid_t pid = fork();
-    if (pid < 0) {
-      perror("fork");
-      close(clientSocket);
-      continue;
-    }
-
-    if (pid == 0) {
-      // child
-      close(serverSocket);
-      handle_client(clientSocket, spoolDir);
-      _exit(0);
-    } else {
-      // parent
-      close(clientSocket);
-    }
+    handle_client(clientSocket, spoolDir);
+    // loop back to accept() for the next client
   }
 
   // Unreachable in this simple loop
