@@ -8,7 +8,7 @@ COMMON_SRC  = common/net.cpp
 
 # targets
 CLIENT_SRC  = client/client.cpp $(COMMON_SRC)
-SERVER_SRC  = server/server.cpp server/command_factory.cpp $(COMMON_SRC)
+SERVER_SRC  = server/server.cpp server/command_factory.cpp server/auth_manager.cpp $(COMMON_SRC)
 
 all: $(BIN)/twmailer-client $(BIN)/twmailer-server
 
@@ -18,7 +18,7 @@ $(BIN)/twmailer-client: $(CLIENT_SRC)
 
 $(BIN)/twmailer-server: $(SERVER_SRC)
 	mkdir -p $(BIN)
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -o $@ $^
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -o $@ $^ -lldap -llber
 
 clean:
 	rm -rf $(BIN)
