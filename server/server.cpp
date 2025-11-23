@@ -50,7 +50,8 @@ static int create_server_socket(int port) {
 
 // ---------- per-client handling (framing + dispatch) ----------
 static void handle_client(int clientSocket, const std::string& spoolDir) {
-  (void)spoolDir;  // will be used by handlers later
+  // Create context once per client session to maintain authentication state
+  Context ctx{clientSocket, spoolDir, ""};  // Start with empty authenticatedUser
 
   for (;;) {
     // 1) read 4-byte length (network order)
@@ -93,7 +94,7 @@ static void handle_client(int clientSocket, const std::string& spoolDir) {
       continue;
     }
 
-    Context ctx{clientSocket, spoolDir};
+    // Execute command with persistent context (authentication state is maintained)
     CommandOutcome out = cmd->execute(ctx, lines);
 
     // Antwort schicken (wenn vorhanden)

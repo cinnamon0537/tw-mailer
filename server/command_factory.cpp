@@ -5,8 +5,95 @@
 #include <algorithm>
 #include <cctype>
 #include <iostream>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/file.h>
 
 namespace fs = std::filesystem;
+
+// ----------------- authentication (mock - will be replaced with LDAP) -----------------
+
+/**
+ * @brief Mock authentication function
+ * @param username Username to authenticate
+ * @param password Password to verify
+ * @return true if authentication succeeds, false otherwise
+ * 
+ * TODO: Replace with LDAP authentication in next commit
+ */
+static bool authenticate_user(const std::string& username, const std::string& password) {
+  // Mock authentication: accept any non-empty username/password for now
+  // In production, this will query LDAP
+  return !username.empty() && !password.empty();
+}
+
+// ----------------- file locking helpers -----------------
+
+/**
+ * @brief RAII wrapper for file-based advisory locks using flock()
+ * Provides process-level synchronization for multi-process applications
+ */
+class FileLock {
+public:
+  enum class LockType {
+    SHARED,    // Shared (read) lock - multiple processes can hold simultaneously
+    EXCLUSIVE  // Exclusive (write) lock - only one process can hold
+  };
+
+  FileLock(const fs::path& lockfile, LockType type = LockType::EXCLUSIVE, bool blocking = true)
+    : fd_(-1), locked_(false) {
+    // Create lock file if it doesn't exist
+    fd_ = open(lockfile.c_str(), O_CREAT | O_RDWR, 0644);
+    if (fd_ < 0) return;
+    
+    int operation = (type == LockType::SHARED) ? LOCK_SH : LOCK_EX;
+    if (!blocking) operation |= LOCK_NB;
+    
+    if (flock(fd_, operation) == 0) {
+      locked_ = true;
+    }
+  }
+  
+  ~FileLock() {
+    unlock();
+  }
+  
+  FileLock(const FileLock&) = delete;
+  FileLock& operator=(const FileLock&) = delete;
+  
+  FileLock(FileLock&& other) noexcept : fd_(other.fd_), locked_(other.locked_) {
+    other.fd_ = -1;
+    other.locked_ = false;
+  }
+  
+  FileLock& operator=(FileLock&& other) noexcept {
+    if (this != &other) {
+      unlock();
+      fd_ = other.fd_;
+      locked_ = other.locked_;
+      other.fd_ = -1;
+      other.locked_ = false;
+    }
+    return *this;
+  }
+  
+  bool is_locked() const { return fd_ >= 0 && locked_; }
+  
+  void unlock() {
+    if (locked_ && fd_ >= 0) {
+      flock(fd_, LOCK_UN);
+      locked_ = false;
+    }
+    if (fd_ >= 0) {
+      close(fd_);
+      fd_ = -1;
+    }
+  }
+
+private:
+  int fd_;
+  bool locked_;
+};
 
 // ----------------- small helpers -----------------
 
@@ -22,7 +109,24 @@ static int to_int(const std::string& s) {
   try { return std::stoi(s); } catch (...) { return -1; }
 }
 
+/**
+ * @brief Get the next available message ID for a user directory
+ * @param dir User directory path
+ * @return Next available message ID
+ * 
+ * This function is protected by file locking to prevent race conditions
+ * when multiple processes try to create messages simultaneously.
+ */
 static int next_message_id(const fs::path& dir) {
+  // Lock file for this user's directory to prevent race conditions
+  fs::path lockfile = dir / ".lock";
+  FileLock lock(lockfile, FileLock::LockType::EXCLUSIVE);
+  
+  if (!lock.is_locked()) {
+    // If we can't acquire lock, return a safe fallback
+    return 1;
+  }
+  
   int max_id = 0;
   if (!fs::exists(dir)) return 1;
   for (auto& entry : fs::directory_iterator(dir)) {
@@ -59,9 +163,34 @@ static std::string slurp(const fs::path& file) {
 
 // ----------------- Commands -----------------
 
+class LoginCommand final : public ICommand {
+public:
+  CommandOutcome execute(Context& ctx, const std::vector<std::string>& lines) override {
+    // EXPECT: lines[0]=LOGIN, [1]=username, [2]=password
+    if (lines.size() < 3) {
+      return {false, "ERR\n"};
+    }
+    
+    const std::string& username = lines[1];
+    const std::string& password = lines[2];
+    
+    if (authenticate_user(username, password)) {
+      ctx.authenticatedUser = username;
+      return {false, "OK\n"};
+    } else {
+      return {false, "ERR\n"};
+    }
+  }
+};
+
 class SendCommand final : public ICommand {
 public:
   CommandOutcome execute(Context& ctx, const std::vector<std::string>& lines) override {
+    // Check authentication
+    if (ctx.authenticatedUser.empty()) {
+      return {false, "ERR\n"};
+    }
+    
     // EXPECT: lines[0]=SEND, [1]=from, [2]=to, [3]=subject, [4..]=body lines (already joined by client)
     if (lines.size() < 4) {
       return {false, "ERR\n"};
@@ -82,6 +211,15 @@ public:
     }
 
     fs::path udir = user_dir(ctx, to);
+    
+    // Lock the user directory for exclusive access during message creation
+    fs::path lockfile = udir / ".lock";
+    FileLock lock(lockfile, FileLock::LockType::EXCLUSIVE);
+    
+    if (!lock.is_locked()) {
+      return {false, "ERR\n"};
+    }
+    
     std::error_code ec;
     fs::create_directories(udir, ec);
     if (ec) {
@@ -108,10 +246,30 @@ public:
 class ListCommand final : public ICommand {
 public:
   CommandOutcome execute(Context& ctx, const std::vector<std::string>& lines) override {
+    // Check authentication
+    if (ctx.authenticatedUser.empty()) {
+      return {false, "ERR\n"};
+    }
+    
     // EXPECT: lines[0]=LIST, [1]=user
     if (lines.size() < 2) return {false, "ERR\n"};
     const std::string& user = lines[1];
+    
+    // Verify user can only list their own mailbox
+    if (user != ctx.authenticatedUser) {
+      return {false, "ERR\n"};
+    }
+    
     fs::path udir = user_dir(ctx, user);
+    
+    // Lock the user directory for shared access during listing
+    fs::path lockfile = udir / ".lock";
+    FileLock lock(lockfile, FileLock::LockType::SHARED);
+    
+    if (!lock.is_locked() && fs::exists(udir)) {
+      // If directory exists but we can't lock, return error
+      return {false, "ERR\n"};
+    }
 
     if (!fs::exists(udir) || !fs::is_directory(udir)) {
       // no messages
@@ -120,13 +278,17 @@ public:
 
     // collect numeric files and sort by id ascending
     std::vector<std::pair<int, fs::path>> msgs;
-    for (auto& entry : fs::directory_iterator(udir)) {
-      if (!entry.is_regular_file()) continue;
-      auto name = entry.path().filename().string();
-      auto dot  = name.find('.');
-      auto stem = (dot == std::string::npos) ? name : name.substr(0, dot);
-      if (is_number(stem)) {
-        msgs.emplace_back(to_int(stem), entry.path());
+    if (fs::exists(udir) && fs::is_directory(udir)) {
+      for (auto& entry : fs::directory_iterator(udir)) {
+        if (!entry.is_regular_file()) continue;
+        auto name = entry.path().filename().string();
+        // Skip lock files
+        if (name == ".lock") continue;
+        auto dot  = name.find('.');
+        auto stem = (dot == std::string::npos) ? name : name.substr(0, dot);
+        if (is_number(stem)) {
+          msgs.emplace_back(to_int(stem), entry.path());
+        }
       }
     }
     std::sort(msgs.begin(), msgs.end(),
@@ -145,13 +307,30 @@ public:
 class ReadCommand final : public ICommand {
 public:
   CommandOutcome execute(Context& ctx, const std::vector<std::string>& lines) override {
+    // Check authentication
+    if (ctx.authenticatedUser.empty()) {
+      return {false, "ERR\n"};
+    }
+    
     // EXPECT: lines[0]=READ, [1]=user, [2]=id
     if (lines.size() < 3) return {false, "ERR\n"};
     const std::string& user = lines[1];
+    
+    // Verify user can only read their own mailbox
+    if (user != ctx.authenticatedUser) {
+      return {false, "ERR\n"};
+    }
+    
     int id = to_int(lines[2]);
     if (id <= 0) return {false, "ERR\n"};
 
-    fs::path file = user_dir(ctx, user) / (std::to_string(id) + ".txt");
+    fs::path udir = user_dir(ctx, user);
+    fs::path file = udir / (std::to_string(id) + ".txt");
+    
+    // Lock the user directory for shared access during read
+    fs::path lockfile = udir / ".lock";
+    FileLock lock(lockfile, FileLock::LockType::SHARED);
+    
     if (!fs::exists(file)) return {false, "ERR\n"};
 
     std::string content = slurp(file);
@@ -166,13 +345,36 @@ public:
 class DelCommand final : public ICommand {
 public:
   CommandOutcome execute(Context& ctx, const std::vector<std::string>& lines) override {
+    // Check authentication
+    if (ctx.authenticatedUser.empty()) {
+      return {false, "ERR\n"};
+    }
+    
     // EXPECT: lines[0]=DEL, [1]=user, [2]=id
     if (lines.size() < 3) return {false, "ERR\n"};
     const std::string& user = lines[1];
+    
+    // Verify user can only delete from their own mailbox
+    if (user != ctx.authenticatedUser) {
+      return {false, "ERR\n"};
+    }
+    
     int id = to_int(lines[2]);
     if (id <= 0) return {false, "ERR\n"};
 
-    fs::path file = user_dir(ctx, user) / (std::to_string(id) + ".txt");
+    fs::path udir = user_dir(ctx, user);
+    fs::path file = udir / (std::to_string(id) + ".txt");
+    
+    // Lock the user directory for exclusive access during deletion
+    fs::path lockfile = udir / ".lock";
+    FileLock lock(lockfile, FileLock::LockType::EXCLUSIVE);
+    
+    if (!lock.is_locked()) {
+      return {false, "ERR\n"};
+    }
+    
+    if (!fs::exists(file)) return {false, "ERR\n"};
+    
     std::error_code ec;
     bool ok = fs::remove(file, ec);
     if (!ok || ec) return {false, "ERR\n"};
@@ -193,6 +395,7 @@ public:
 
 std::unique_ptr<ICommand> CommandFactory::create(CommandType type) {
   switch (type) {
+    case CommandType::LOGIN: return std::make_unique<LoginCommand>();
     case CommandType::SEND: return std::make_unique<SendCommand>();
     case CommandType::LIST: return std::make_unique<ListCommand>();
     case CommandType::READ: return std::make_unique<ReadCommand>();

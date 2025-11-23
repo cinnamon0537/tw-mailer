@@ -4,11 +4,11 @@
 #include <unordered_map>
 #include <vector>
 
-enum class CommandType { SEND, LIST, READ, DEL, QUIT, UNKNOWN };
+enum class CommandType { LOGIN, SEND, LIST, READ, DEL, QUIT, UNKNOWN };
 
 inline CommandType command_from(std::string_view s) {
   static const std::unordered_map<std::string_view, CommandType> map{
-      {"SEND", CommandType::SEND}, {"LIST", CommandType::LIST},
+      {"LOGIN", CommandType::LOGIN}, {"SEND", CommandType::SEND}, {"LIST", CommandType::LIST},
       {"READ", CommandType::READ}, {"DEL", CommandType::DEL},
       {"QUIT", CommandType::QUIT},
   };
